@@ -26,87 +26,18 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.productivityservicehub.creaftmyresume.model.*
+import com.productivityservicehub.creaftmyresume.screens.SplashScreen
 import com.productivityservicehub.creaftmyresume.ui.theme.CreaftMyResumeTheme
 import com.productivityservicehub.creaftmyresume.util.PDFGenerator
-import com.productivityservicehub.creaftmyresume.util.ResumeStorage
-import com.productivityservicehub.creaftmyresume.util.showPdfFile
+import java.io.File
 
 class MainActivity : ComponentActivity() {
-    private lateinit var pdfGenerator: PDFGenerator
-    private lateinit var resumeStorage: ResumeStorage
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        pdfGenerator = PDFGenerator(this)
-        resumeStorage = ResumeStorage(this)
-
         setContent {
-            val navController = rememberNavController()
-            var currentTemplate by remember { mutableStateOf<ResumeTemplate?>(null) }
-            var currentResumeInfo by remember { mutableStateOf<ResumeInfo?>(null) }
-
-            NavHost(navController = navController, startDestination = "saved_resumes") {
-                composable("saved_resumes") {
-                    val savedResumes by remember {
-                        derivedStateOf {
-                            resumeStorage.getSavedResumeKeys()
-                                .mapNotNull { resumeStorage.getResumeMetadata(it) }
-                        }
-                    }
-
-                    SavedResumesScreen(
-                        savedResumes = savedResumes,
-                        onResumeClick = { resumeKey ->
-                            val resume = resumeStorage.loadResume(resumeKey)
-                            if (resume != null) {
-                                currentResumeInfo = resume
-                                navController.navigate("resume_info")
-                            }
-                        },
-                        onDeleteResume = { resumeKey ->
-                            resumeStorage.deleteResume(resumeKey)
-                        },
-                        onCreateNewResume = {
-                            currentResumeInfo = null
-                            navController.navigate("template_selection")
-                        }
-                    )
-                }
-
-                composable("template_selection") {
-                    TemplateSelectionScreen(
-                        onTemplateSelected = { template ->
-                            currentTemplate = template
-                            navController.navigate("resume_info")
-                        }
-                    )
-                }
-
-                composable("resume_info") {
-                    ResumeInfoScreen(
-                        template = currentTemplate ?: ResumeTemplate.TEMPLATE1,
-                        initialResumeInfo = currentResumeInfo ?: ResumeInfo(),
-                        onNavigateBack = { navController.navigateUp() },
-                        onSaveResume = { resumeInfo ->
-                            // Save the resume data
-                            resumeStorage.saveResume(resumeInfo, currentTemplate?.name ?: "default")
-                            
-                            // Generate and show PDF
-                            val pdfFile = pdfGenerator.generatePdf(resumeInfo, currentTemplate?.name ?: "default")
-                            showPdfFile(this@MainActivity, pdfFile)
-                            
-                            // Navigate back to saved resumes
-                            navController.navigate("saved_resumes") {
-                                popUpTo("saved_resumes") { inclusive = true }
-                            }
-                        },
-                        onPreviewResume = { resumeInfo ->
-                            val pdfFile = pdfGenerator.generatePdf(resumeInfo, currentTemplate?.name ?: "default")
-                            showPdfFile(this@MainActivity, pdfFile)
-                        }
-                    )
-                }
+            CreaftMyResumeTheme {
+                ResumeApp()
             }
         }
     }
@@ -116,98 +47,107 @@ class MainActivity : ComponentActivity() {
 fun ResumeApp() {
     val navController = rememberNavController()
     var resumeInfoMap by remember { mutableStateOf(mutableMapOf<Int, ResumeInfo>()) }
+    var showSplash by remember { mutableStateOf(true) }
     val context = LocalContext.current
 
-    NavHost(navController = navController, startDestination = "templates") {
-        composable("templates") {
-            ResumeTemplatesScreen(
-                onTemplateSelected = { template ->
-                    navController.navigate("resume_info/${template.id}")
-                }
-            )
-        }
-        
-        composable(
-            route = "resume_info/{templateId}",
-            arguments = listOf(navArgument("templateId") { type = NavType.IntType })
-        ) { backStackEntry ->
-            val templateId = backStackEntry.arguments?.getInt("templateId") ?: 1
-            val template = getTemplateById(templateId)
-            
-            // Get existing resume info or create new one
-            val existingResumeInfo = resumeInfoMap[templateId]
-            
-            ResumeInfoScreen(
-                template = template,
-                initialResumeInfo = existingResumeInfo ?: ResumeInfo(
-                    personalInfo = PersonalInfo(),
-                    summary = "",
-                    projects = emptyList(),
-                    education = emptyList(),
-                    experience = emptyList(),
-                    trainingAndCertifications = emptyList(),
-                    technicalSkills = TechnicalSkills()
-                ),
-                onNavigateBack = { navController.navigateUp() },
-                onSaveResume = { resumeInfo ->
-                    // Save resume info to map
-                    resumeInfoMap = resumeInfoMap.toMutableMap().apply {
-                        put(templateId, resumeInfo)
-                    }
-                    navController.navigateUp()
-                },
-                onPreviewResume = { resumeInfo ->
-                    // Save resume info to map before previewing
-                    resumeInfoMap = resumeInfoMap.toMutableMap().apply {
-                        put(templateId, resumeInfo)
-                    }
-                    navController.navigate("preview/${templateId}")
-                }
-            )
-        }
-        
-        composable(
-            route = "preview/{templateId}",
-            arguments = listOf(navArgument("templateId") { type = NavType.IntType })
-        ) { backStackEntry ->
-            val templateId = backStackEntry.arguments?.getInt("templateId") ?: 1
-            val template = getTemplateById(templateId)
-            val resumeInfo = resumeInfoMap[templateId]
-            
-            resumeInfo?.let { info ->
-                ResumePreviewScreen(
-                    resumeInfo = info,
-                    onNavigateBack = { navController.navigateUp() },
-                    onShareResume = {
-                        try {
-                            val pdfGenerator = PDFGenerator(context)
-                            val file = pdfGenerator.generatePdf(info, template.name)
-                            
-                            // Get the URI for the file using FileProvider
-                            val uri = FileProvider.getUriForFile(
-                                context,
-                                "${context.packageName}.provider",
-                                file
-                            )
-                            
-                            // Create and start the share intent
-                            val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                                type = "application/pdf"
-                                putExtra(Intent.EXTRA_STREAM, uri)
-                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                putExtra(Intent.EXTRA_SUBJECT, "My Resume")
-                            }
-                            
-                            context.startActivity(Intent.createChooser(shareIntent, "Share Resume"))
-                        } catch (e: Exception) {
-                            Toast.makeText(
-                                context,
-                                "Error sharing resume: ${e.message}",
-                                Toast.LENGTH_LONG
-                            ).show()
-                        }
+    if (showSplash) {
+        SplashScreen(
+            onSplashComplete = {
+                showSplash = false
+            }
+        )
+    } else {
+        NavHost(navController = navController, startDestination = "templates") {
+            composable("templates") {
+                ResumeTemplatesScreen(
+                    onTemplateSelected = { template ->
+                        navController.navigate("resume_info/${template.id}")
                     }
                 )
+            }
+            
+            composable(
+                route = "resume_info/{templateId}",
+                arguments = listOf(navArgument("templateId") { type = NavType.IntType })
+            ) { backStackEntry ->
+                val templateId = backStackEntry.arguments?.getInt("templateId") ?: 1
+                val template = getTemplateById(templateId)
+                
+                // Get existing resume info or create new one
+                val existingResumeInfo = resumeInfoMap[templateId]
+                
+                ResumeInfoScreen(
+                    template = template,
+                    initialResumeInfo = existingResumeInfo ?: ResumeInfo(
+                        personalInfo = PersonalInfo(),
+                        summary = "",
+                        projects = emptyList(),
+                        education = emptyList(),
+                        experience = emptyList(),
+                        trainingAndCertifications = emptyList(),
+                        technicalSkills = TechnicalSkills()
+                    ),
+                    onNavigateBack = { navController.navigateUp() },
+                    onSaveResume = { resumeInfo ->
+                        // Save resume info to map
+                        resumeInfoMap = resumeInfoMap.toMutableMap().apply {
+                            put(templateId, resumeInfo)
+                        }
+                        navController.navigateUp()
+                    },
+                    onPreviewResume = { resumeInfo ->
+                        // Save resume info to map before previewing
+                        resumeInfoMap = resumeInfoMap.toMutableMap().apply {
+                            put(templateId, resumeInfo)
+                        }
+                        navController.navigate("preview/${templateId}")
+                    }
+                )
+            }
+            
+            composable(
+                route = "preview/{templateId}",
+                arguments = listOf(navArgument("templateId") { type = NavType.IntType })
+            ) { backStackEntry ->
+                val templateId = backStackEntry.arguments?.getInt("templateId") ?: 1
+                val template = getTemplateById(templateId)
+                val resumeInfo = resumeInfoMap[templateId]
+                
+                resumeInfo?.let { info ->
+                    ResumePreviewScreen(
+                        resumeInfo = info,
+                        onNavigateBack = { navController.navigateUp() },
+                        onShareResume = {
+                            try {
+                                val pdfGenerator = PDFGenerator(context)
+                                val file = pdfGenerator.generatePdf(info, template.name)
+                                
+                                // Get the URI for the file using FileProvider
+                                val uri = FileProvider.getUriForFile(
+                                    context,
+                                    "${context.packageName}.provider",
+                                    file
+                                )
+                                
+                                // Create and start the share intent
+                                val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                    type = "application/pdf"
+                                    putExtra(Intent.EXTRA_STREAM, uri)
+                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                    putExtra(Intent.EXTRA_SUBJECT, "My Resume")
+                                }
+                                
+                                context.startActivity(Intent.createChooser(shareIntent, "Share Resume"))
+                            } catch (e: Exception) {
+                                Toast.makeText(
+                                    context,
+                                    "Error sharing resume: ${e.message}",
+                                    Toast.LENGTH_LONG
+                                ).show()
+                            }
+                        }
+                    )
+                }
             }
         }
     }
@@ -241,6 +181,7 @@ fun ResumeTemplatesScreen(
         modifier = modifier
             .fillMaxSize()
             .padding(16.dp)
+            .safeContentPadding()
     ) {
         Text(
             text = "Choose Your Template",
